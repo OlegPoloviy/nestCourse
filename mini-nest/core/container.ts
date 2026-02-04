@@ -1,4 +1,6 @@
-export class Container {
+import { METADATA_TYPES } from './constants';
+
+class Container {
   private instances = new Map<any, any>();
 
   resolve<T>(target: any): T {
@@ -7,7 +9,7 @@ export class Container {
       return this.instances.get(target);
     }
 
-    const isInjectable = Reflect.getMetadata('injectable', target);
+    const isInjectable = Reflect.getMetadata(METADATA_TYPES.INJECTABLE, target);
     if (!isInjectable) {
       throw new Error(`Cannot resolve ${target.name} because it is not injectable`);
     }
@@ -28,3 +30,5 @@ export class Container {
     return instance;
   }
 }
+
+export const container = new Container();
