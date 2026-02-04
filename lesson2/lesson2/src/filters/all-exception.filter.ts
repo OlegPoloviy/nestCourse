@@ -8,7 +8,6 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 
-// Інтерфейс для відповіді з помилкою
 interface ErrorResponse {
   requestId: string;
   timestamp: string;
@@ -35,8 +34,6 @@ export class AllExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionFilter.name);
 
   catch(exception: unknown, host: ArgumentsHost): void {
-    // ✅ unknown, не ExceptionFilter
-
     console.error(exception);
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
@@ -44,7 +41,7 @@ export class AllExceptionFilter implements ExceptionFilter {
 
     // Витягуємо дані з request
     const requestId = (request as any).requestId || 'unknown';
-    const timestamp = new Date().toISOString(); // ✅ ISO формат
+    const timestamp = new Date().toISOString();
     const path = request.url;
     const method = request.method;
 
@@ -123,7 +120,6 @@ export class AllExceptionFilter implements ExceptionFilter {
 
     // Різні рівні логування залежно від статус коду
     if (statusCode >= 500) {
-      // Серверні помилки - error
       this.logger.error(
         `${method} ${path} - ${statusCode} ${error.code}: ${error.message}`,
         exception instanceof Error
@@ -133,7 +129,7 @@ export class AllExceptionFilter implements ExceptionFilter {
     } else if (statusCode >= 400) {
       // Клієнтські помилки - warn
       this.logger.warn(
-        `${method} ${path} - ${statusCode} ${error.code}: ${error.message}`,
+        `${method} ${path} - ${statusCode} ${error.code}: ${error.message}, `,
       );
     } else {
       // Інші - log

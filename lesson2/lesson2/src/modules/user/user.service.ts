@@ -1,31 +1,58 @@
 import { Injectable } from '@nestjs/common';
-import { CreateUserDto } from './dto/create-user.dto';
+import { CreateUserDtoV1 } from './v1/dto/create-user.dto.v1';
+import { UserDtoV2 } from './v2/dto/user.dto.v2';
 
 @Injectable()
 export class UserService {
   private users: any[] = [
     {
+      id: '1',
       email: 'admin@admin.com',
-      password: 'admin',
-      roles: ['admin'],
-    },
-    {
-      email: 'user@email.com',
-      password: 'user',
-      roles: ['user'],
+      createdAt: new Date(),
+      updatedAt: new Date(),
     },
   ];
 
-  getAll(limit: number) {
-    if (limit >= 0) {
-      return this.users.slice(limit);
-    }
+  getAll(limit?: number) {
+    const data =
+      limit !== undefined && limit >= 0
+        ? this.users.slice(0, limit)
+        : this.users;
 
-    const response = { count: this.users.length, users: this.users };
-    return response;
+    return {
+      count: this.users.length,
+      data: data,
+    };
   }
 
-  addUser(user: CreateUserDto) {
-    this.users.push(user);
+  addUserV1(dto: CreateUserDtoV1) {
+    const newUser: any = {
+      id: crypto.randomUUID(),
+      ...dto,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any;
+
+    this.users.push(newUser);
+    return newUser;
+  }
+
+  deleteUser(id: string) {
+    const index = this.users.findIndex((user) => user.id === id);
+    if (index === -1) {
+      return { ok: false, message: 'User not found' };
+    }
+    this.users.splice(index, 1);
+    return { ok: true };
+  }
+
+  addUserV2(dto: UserDtoV2) {
+    const newUser = {
+      email: dto.email,
+      profile: dto.profile,
+      id: crypto.randomUUID(),
+    };
+
+    this.users.push(newUser);
   }
 }

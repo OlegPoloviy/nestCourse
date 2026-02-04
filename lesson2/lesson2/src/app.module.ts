@@ -7,6 +7,7 @@ import {
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { UserModule } from './modules/user/user.module';
+import { RequestIdMiddleware } from './middlewares/request-id.middleware';
 
 function CustomDecorator() {
   return function (
@@ -36,7 +37,7 @@ function CustomDecorator() {
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule implements OnModuleInit {
+export class AppModule implements OnModuleInit, NestModule {
   // configure(consumer: MiddlewareConsumer) {
   //   consumer.apply(RequestMiddleware).forRoutes('*');
   // }
@@ -44,5 +45,9 @@ export class AppModule implements OnModuleInit {
   @CustomDecorator()
   onModuleInit(): any {
     console.log('AppModule initialized');
+  }
+
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(RequestIdMiddleware).forRoutes('*');
   }
 }
