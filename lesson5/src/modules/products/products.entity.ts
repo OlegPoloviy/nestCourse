@@ -5,9 +5,12 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   OneToMany,
+  Index,
 } from 'typeorm';
+import { OrderItemEntity } from '../orders/order-item.entity';
 
 @Entity('Products')
+@Index('IDX_PRODUCT_PRICE_DESC', ['price'])
 export class Product {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -30,8 +33,8 @@ export class Product {
   @Column({ type: 'boolean', default: true })
   isActive: boolean;
 
-  @OneToMany(() => OrderItem, (item) => item.product)
-  orderItems: OrderItem[];
+  @OneToMany(() => OrderItemEntity, (item) => item.product)
+  orderItems: OrderItemEntity[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

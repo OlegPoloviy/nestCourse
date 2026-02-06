@@ -21,7 +21,6 @@ interface ErrorResponse {
   };
 }
 
-// Нормалізована структура exception
 interface NormalizedException {
   statusCode: number;
   code: string;
@@ -29,7 +28,7 @@ interface NormalizedException {
   details?: any;
 }
 
-@Catch() // ✅ Ловить ВСІ exception (без параметрів)
+@Catch()
 export class AllExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionFilter.name);
 
@@ -39,17 +38,14 @@ export class AllExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    // Витягуємо дані з request
     const requestId = (request as any).requestId || 'unknown';
     const timestamp = new Date().toISOString();
     const path = request.url;
     const method = request.method;
 
-    // Нормалізуємо exception до єдиного формату
     const { statusCode, code, message, details } =
       this.normalizeException(exception);
 
-    // Формуємо payload
     const payload: ErrorResponse = {
       requestId,
       timestamp,
@@ -63,21 +59,16 @@ export class AllExceptionFilter implements ExceptionFilter {
       },
     };
 
-    // Логуємо помилку
     this.logException(exception, payload);
 
-    // ✅ Відправляємо відповідь клієнту
     response.status(statusCode).json(payload);
   }
 
-  // Метод для нормалізації різних типів exception
   private normalizeException(exception: unknown): NormalizedException {
-    // 1. HttpException від NestJS
     if (exception instanceof HttpException) {
       const response = exception.getResponse();
       const statusCode = exception.getStatus();
 
-      // Якщо response - об'єкт з деталями
       if (typeof response === 'object') {
         return {
           statusCode,
@@ -87,7 +78,6 @@ export class AllExceptionFilter implements ExceptionFilter {
         };
       }
 
-      // Якщо response - просто строка
       return {
         statusCode,
         code: HttpStatus[statusCode],
@@ -95,7 +85,6 @@ export class AllExceptionFilter implements ExceptionFilter {
       };
     }
 
-    // 2. Стандартні JavaScript Error
     if (exception instanceof Error) {
       return {
         statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
@@ -114,11 +103,9 @@ export class AllExceptionFilter implements ExceptionFilter {
     };
   }
 
-  // Метод для логування
   private logException(exception: unknown, payload: ErrorResponse): void {
     const { statusCode, error, method, path } = payload;
 
-    // Різні рівні логування залежно від статус коду
     if (statusCode >= 500) {
       this.logger.error(
         `${method} ${path} - ${statusCode} ${error.code}: ${error.message}`,
@@ -127,12 +114,10 @@ export class AllExceptionFilter implements ExceptionFilter {
           : JSON.stringify(exception),
       );
     } else if (statusCode >= 400) {
-      // Клієнтські помилки - warn
       this.logger.warn(
         `${method} ${path} - ${statusCode} ${error.code}: ${error.message}, `,
       );
     } else {
-      // Інші - log
       this.logger.log(
         `${method} ${path} - ${statusCode} ${error.code}: ${error.message}`,
       );
