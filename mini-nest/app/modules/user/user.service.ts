@@ -7,4 +7,12 @@ export class UserService {
   findAll() {
     return this.users;
   }
+
+  findById(id: number){
+    return this.users.find(user => user.id === id);
+  }
+  create(user: any) {
+    this.users.push(user);
+    return user;
+  }
 }
