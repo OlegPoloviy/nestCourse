@@ -7,6 +7,7 @@ export const METADATA_TYPES = {
   GUARDS: 'mini:nest:guards',
   PIPES: 'mini:nest:pipes',
   CONTROLLER_PREFIX: 'mini:nest:controller:prefix',
+  INJECT: 'mini:nest:inject',
 };
 
 export type Method = 'get' | 'post' | 'put' | 'patch' | 'delete';
