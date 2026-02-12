@@ -78,3 +78,5 @@ Planning:
 Planning Time: 0.540 ms
 Execution Time: 0.153 ms
 ```
+**About planner**
+Why this approach is better? Without any index the database query needs to read all the rows in a table, then sort them (in my case by the price) and only then return it to user. With the help of index, query can directly jump into the most expensive products without getting all the data from table
