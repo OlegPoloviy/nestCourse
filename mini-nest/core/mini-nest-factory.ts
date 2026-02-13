@@ -79,7 +79,9 @@ export function MiniNestFactory(AppModule: any) {
               const allPipes = [...globalPipes, ...controllerPipes, ...methodPipes, ...paramPipes];
 
               for (const PipeClass of allPipes) {
-                const pipe = container.resolve(PipeClass) as any;
+                const pipe = typeof PipeClass === 'function' 
+                  ? container.resolve(PipeClass) 
+                  : PipeClass;                
                 value = await pipe.transform(value, {
                   metatype: param.metatype,
                   type: param.type,
@@ -94,7 +96,9 @@ export function MiniNestFactory(AppModule: any) {
             const allGuards = [...globalGuards, ...controllerGuards, ...methodGuards];
             
             for (const GuardClass of allGuards) {
-              const guard = container.resolve(GuardClass) as any;
+              const guard = typeof GuardClass === 'function' 
+                  ? container.resolve(GuardClass) 
+                  : GuardClass;                
               const canActivate = await guard.canActivate({ req });
               if (!canActivate) {
                 throw new ForbiddenException();
