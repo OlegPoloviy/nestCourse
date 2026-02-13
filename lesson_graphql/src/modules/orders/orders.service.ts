@@ -126,63 +126,61 @@ export class OrdersService {
   }
 
   async getOrderById(id: string): Promise<OrdersEntity> {
-    try {
-      const order = await this.ordersRepository.findOne({
-        where: { id },
-        relations: ['items', 'items.product', 'user'],
-      });
+    const order = await this.ordersRepository.findOne({
+      where: { id },
+    });
 
-      if (!order) {
-        throw new NotFoundException('Order not found');
-      }
-
-      return order;
-    } catch (err) {
-      throw new InternalServerErrorException('Failed to retrieve order');
+    if (!order) {
+      throw new NotFoundException('Order not found');
     }
+
+    return order;
   }
 
-  async getOrders(pagination?,filters? ): Promise<OrdersEntity[]> {
-    try {
-      const where: FindOptionsWhere<OrdersEntity> = {};
+  async getOrders(pagination?,filters?): Promise<OrdersEntity[]> {
+    const where: FindOptionsWhere<OrdersEntity> = {};
 
-      const page = pagination?.page || 1;
-      const limit = pagination?.limit || 10;
+    const page = pagination?.page || 1;
+    const limit = pagination?.limit || 10;
 
-      if (filters?.status) {
-        where.status = filters.status;
-      }
-
-      if (filters?.dateFrom && filters?.dateTo) {
-        where.createdAt = Between(
-          new Date(filters.dateFrom),
-          new Date(filters.dateTo),
-        );
-      } else if (filters?.dateFrom) {
-        where.createdAt = MoreThanOrEqual(new Date(filters.dateFrom));
-      } else if (filters?.dateTo) {
-        where.createdAt = LessThanOrEqual(new Date(filters.dateTo));
-      }
-
-      const skip = (Math.max(1, page) - 1) * limit;
-
-      const [orders, count] = await this.ordersRepository.findAndCount({
-        where,
-        order: { createdAt: 'DESC' },
-        relations: ['items', 'items.product', 'user'],
-        take: limit,
-        skip,
-      });
-
-      return {
-        //@ts-ignore
-        items: orders,
-        total: count,
-      };
-    } catch (err) {
-      console.error(err);
-      throw new InternalServerErrorException('Failed to retrieve orders');
+    if (filters?.status) {
+      where.status = filters.status;
     }
+
+    if (filters?.dateFrom && filters?.dateTo) {
+      where.createdAt = Between(
+        new Date(filters.dateFrom),
+        new Date(filters.dateTo),
+      );
+    } else if (filters?.dateFrom) {
+      where.createdAt = MoreThanOrEqual(new Date(filters.dateFrom));
+    } else if (filters?.dateTo) {
+      where.createdAt = LessThanOrEqual(new Date(filters.dateTo));
+    }
+
+    const skip = (Math.max(1, page) - 1) * limit;
+
+    const [orders, count] = await this.ordersRepository.findAndCount({
+      where,
+      order: { createdAt: 'DESC' },
+      relations: {items: true},
+      take: limit,
+      skip,
+    });
+
+    return {
+      //@ts-ignore
+      items: orders,
+      total: count,
+    };
+  }
+
+  async getOrderItems(orderId: string): Promise<OrderItemEntity[]> {
+    const orderItems = await this.orderItemsRepository.find({
+      where: { orderId },
+    });
+
+    return orderItems;
   }
 
 

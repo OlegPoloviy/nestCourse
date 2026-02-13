@@ -21,8 +21,8 @@ import {
 import { UserService } from '../user.service';
 import { CreateUserDtoV1 } from './dto/create-user.dto.v1';
 import { validate } from 'class-validator';
-import { CustomBody } from '../../../decorators/body.decorator';
-import { TestGuard } from '../../../guards/test.guard';
+import { CustomBody } from '../../../common/decorators/body.decorator';
+import { TestGuard } from '../../../common/guards/test.guard';
 
 function CustomMethodDecorator() {
   return function (

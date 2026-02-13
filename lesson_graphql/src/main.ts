@@ -1,8 +1,11 @@
+
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { AppModule } from './app.module';
-import { AllExceptionFilter } from './filters/all-exception.filter';
+import { AllExceptionFilter } from './common/filters/all-exception.filter';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { RequestContextMiddleware } from './common/middlewares/request-context.middleware';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -19,6 +22,8 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
+  app.use(new RequestContextMiddleware().use);
 
   app.useGlobalFilters(new AllExceptionFilter());
   const config = new DocumentBuilder()

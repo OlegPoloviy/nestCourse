@@ -7,7 +7,7 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { UserV2ResponseDto } from './dto/user.reponse.dto';
-import { TestGuard } from '../../../guards/test.guard';
+import { TestGuard } from '../../../common/guards/test.guard';
 import { UserDtoV2 } from './dto/user.dto.v2';
 
 @ApiTags('User v2')

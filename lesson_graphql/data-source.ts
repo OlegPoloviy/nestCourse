@@ -1,7 +1,6 @@
 import { DataSource } from 'typeorm';
 import 'dotenv/config';
-import { UserEntity } from './src/modules/user/user.entity';
-import { ProfileEntity } from './src/modules/user/profile.entity';
+
 
 export const AppDataSource = new DataSource({
   type: 'postgres',

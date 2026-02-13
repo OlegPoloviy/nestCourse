@@ -97,3 +97,4 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Якщо ви використовували DataLoader або інший батчер, то повторне виконання того ж запиту вже не повинно показувати багато `SELECT` до products — замість цього буде один (або невелика кількість) запитів, які отримують потрібні продукти пакетно.

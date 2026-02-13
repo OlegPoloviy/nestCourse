@@ -1,5 +1,5 @@
 import { Field, InputType} from '@nestjs/graphql';
-import { IsOptional, IsEnum } from 'class-validator';
+import { IsOptional, IsEnum, IsDateString } from 'class-validator';
 import { OrderStatus } from 'src/constants';
 
 @InputType()
@@ -11,9 +11,11 @@ export class OrderFilterInput {
 
   @Field(() => String, { nullable: true })
   @IsOptional()
+  @IsDateString()
   dateFrom?: string;
 
   @Field(() => String, { nullable: true })
   @IsOptional()
+  @IsDateString()
   dateTo?: string;
 }

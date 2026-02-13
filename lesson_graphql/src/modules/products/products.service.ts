@@ -24,4 +24,8 @@ export class ProductsService {
       .take(limit)
       .getMany();
   }
+
+  async getProductById(id: string): Promise<Product> {
+    return this.productsRepository.findOne({ where: { id } });
+  }
 }

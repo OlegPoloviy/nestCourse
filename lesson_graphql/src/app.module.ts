@@ -1,8 +1,9 @@
-import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule, RequestMethod } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { UserModule } from './modules/user/user.module';
-import { RequestIdMiddleware } from './middlewares/request-id.middleware';
+import { RequestIdMiddleware } from './common/middlewares/request-id.middleware';
+import { RequestContextMiddleware } from './common/middlewares/request-context.middleware';
 import { DatabaseModule } from './modules/database/database.module';
 import { ConfigModule } from '@nestjs/config';
 import { OrdersModule } from './modules/orders/orders.module';
@@ -19,14 +20,13 @@ import { AppGraphqlModule } from './modules/appgraphql/appgraphql.module';
     AppGraphqlModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService
+  ],
 })
-export class AppModule implements NestModule {
+export class AppModule {
   // configure(consumer: MiddlewareConsumer) {
   //   consumer.apply(RequestMiddleware).forRoutes('*');
   // }
 
-  configure(consumer: MiddlewareConsumer) {
-    consumer.apply(RequestIdMiddleware).forRoutes('*');
-  }
 }

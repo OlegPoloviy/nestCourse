@@ -61,4 +61,8 @@ export class UserService {
 
     return await this.usersRepository.save(newUser);
   }
+
+  async getUserById(id: string) {
+    return this.usersRepository.findOne({ where: { id } });
+  }
 }
