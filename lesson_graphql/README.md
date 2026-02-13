@@ -2,10 +2,9 @@
 
 Graphql is an "update" for a classic REST architecture to deal with overfetching and underfetching. With the help of resolvers and shemas we can build a backend application when client can ask only for required fields.
 
-I chose the Code-First approach for schema generation. NestJS provides excellent support for this via TypeScript decorators (such as @ObjectType(), @InputType(), and @Resolver()). This approach is highly efficient for TypeORM-based projects, as it allows us to use TypeScript classes
-
+I chose the Code-First approach for schema generation. NestJS provides excellent support for this via TypeScript decorators (such as @ObjectType(), @InputType(), and @Resolver()). This approach is highly efficient for TypeORM-based projects, as it allows us to use TypeScript classes as the single source of truth for both our entities and the GraphQL schema.
 **Resolvers that I've added**
-To keep the logic thin and clean , I've  created two resolvers - one for order, and second for order items. Both of them support optimised strategy and simple(Reed in the next section).
+To keep the logic thin and clean, I've created two resolvers: one for Order, and a second for OrderItem. All business logic is isolated in the OrdersService, while resolvers only act as controllers to pass the arguments. Both resolvers support an optimized strategy (DataLoader) and a simple strategy (read in the next section).
 
 **(N+1 issue fix)**
 Before Using a data loader, I had a query:
