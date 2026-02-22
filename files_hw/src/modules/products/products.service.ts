@@ -17,10 +17,9 @@ export class ProductsService {
     return this.productsRepository
       .createQueryBuilder('product')
 
+      .leftJoinAndSelect('product.images', 'image')
       .where('product.price >= :minPrice', { minPrice })
-
       .orderBy('product.price', 'DESC')
-
       .take(limit)
       .getMany();
   }
