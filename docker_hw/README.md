@@ -1,4 +1,4 @@
-** Docker homework **
+**Docker homework**
 How to run everything : 
 
 local dev
