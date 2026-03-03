@@ -1,0 +1,90 @@
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - api-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    env_file:
+      - .env
+    volumes:
+      - minio_data:/data
+    networks:
+      - api-network
+    healthcheck:
+      test: [ "CMD", "mc", "ready", "local" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      target: prod_distroless
+    ports:
+      - "8080:3000"
+    env_file:
+      - .env
+    networks:
+      - api-network
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+
+
+  migrate:
+    build:
+      context: .
+      target: prod_deps
+    command: pnpm run db:migrate
+    profiles:
+      - tools
+    networks:
+      - api-network
+    depends_on:
+        db:
+          condition: service_healthy
+
+
+  seed:
+    build:
+      context: .
+      target: prod_deps
+    command: pnpm run db:seed
+    profiles:
+      - tools
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+          condition: service_completed_successfully
+    networks:
+      - api-network
+
+networks:
+  api-network:
+    driver: bridge
+
+
+volumes:
+  pgdata:
+  minio_data:

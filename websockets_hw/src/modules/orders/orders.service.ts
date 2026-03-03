@@ -1,0 +1,237 @@
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  InternalServerErrorException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { OrdersEntity } from './orders.entity';
+import {
+  Repository,
+  DataSource,
+  DeepPartial,
+  FindOptionsWhere,
+  Between,
+  MoreThanOrEqual,
+  LessThanOrEqual,
+} from 'typeorm';
+import { OrderItemEntity } from './order-item.entity';
+import { Product } from '../products/products.entity';
+import { UserEntity } from '../user/user.entity';
+import { CreateOrderDto } from './create-order.dto';
+import { AuthUser } from '../auth/types/auth.types';
+
+@Injectable()
+export class OrdersService {
+  constructor(
+    private dataSource: DataSource,
+    @InjectRepository(OrdersEntity)
+    private readonly ordersRepository: Repository<OrdersEntity>,
+    @InjectRepository(OrderItemEntity)
+    private readonly orderItemsRepository: Repository<OrderItemEntity>,
+    @InjectRepository(Product)
+    private readonly productsRepository: Repository<Product>,
+    @InjectRepository(UserEntity)
+    private readonly usersRepository: Repository<UserEntity>,
+  ) {}
+
+  async createOrder(data: CreateOrderDto): Promise<OrdersEntity> {
+    const existing = await this.ordersRepository.findOne({
+      where: { idempotencyKey: data.idempotencyKey },
+      relations: ['items'],
+    });
+
+    if (existing) {
+      return existing;
+    }
+
+    const user = await this.usersRepository.findOne({
+      where: { id: data.userId },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const productIds = [
+      ...new Set(data.items.map((item) => item.productId)),
+    ].sort();
+
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const productsRepo = manager.getRepository(Product);
+        const orderItemsRepo = manager.getRepository(OrderItemEntity);
+        const orderRepo = manager.getRepository(OrdersEntity);
+
+        const locked = await productsRepo
+          .createQueryBuilder('product')
+          .where('product.id IN (:...ids)', { ids: productIds })
+          .setLock('pessimistic_write')
+          .getMany();
+
+        if (locked.length !== productIds.length) {
+          throw new BadRequestException('One or more products not found');
+        }
+
+        const productsMap = new Map(locked.map((p) => [p.id, p]));
+
+        const itemsToSave: DeepPartial<OrderItemEntity>[] = [];
+
+        for (const item of data.items) {
+          const product = productsMap.get(item.productId);
+
+          if (product.stock < item.quantity) {
+            throw new ConflictException(
+              `Insufficient stock for product ${product.name}`,
+            );
+          }
+
+          product.stock -= item.quantity;
+
+          itemsToSave.push({
+            product: product,
+            quantity: item.quantity,
+            priceAtPurchase: String(product.price),
+          });
+        }
+
+        await productsRepo.save([...productsMap.values()]);
+
+        const order = orderRepo.create({
+          userId: data.userId,
+          idempotencyKey: data.idempotencyKey,
+        });
+
+        const savedOrder = await orderRepo.save(order);
+
+        const orderItems = orderItemsRepo.create(
+          itemsToSave.map((i) => ({
+            ...i,
+            order: savedOrder,
+          })),
+        );
+
+        await orderItemsRepo.save(orderItems);
+
+        return savedOrder;
+      });
+    } catch (err) {
+      if (err.code === '23505' && err.detail?.includes('idempotencyKey')) {
+        return await this.ordersRepository.findOne({
+          where: { idempotencyKey: data.idempotencyKey },
+          relations: ['items'],
+        });
+      }
+      throw err;
+    }
+  }
+
+  async getOrderById(id: string): Promise<OrdersEntity> {
+    const order = await this.ordersRepository.findOne({
+      where: { id },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    return order;
+  }
+
+  async getOrders(pagination?, filters?): Promise<OrdersEntity[]> {
+    const where: FindOptionsWhere<OrdersEntity> = {};
+
+    const page = pagination?.page || 1;
+    const limit = pagination?.limit || 10;
+
+    if (filters?.status) {
+      where.status = filters.status;
+    }
+
+    if (filters?.dateFrom && filters?.dateTo) {
+      where.createdAt = Between(
+        new Date(filters.dateFrom),
+        new Date(filters.dateTo),
+      );
+    } else if (filters?.dateFrom) {
+      where.createdAt = MoreThanOrEqual(new Date(filters.dateFrom));
+    } else if (filters?.dateTo) {
+      where.createdAt = LessThanOrEqual(new Date(filters.dateTo));
+    }
+
+    const skip = (Math.max(1, page) - 1) * limit;
+
+    const [orders, count] = await this.ordersRepository.findAndCount({
+      where,
+      order: { createdAt: 'DESC' },
+      relations: { items: true },
+      take: limit,
+      skip,
+    });
+
+    return {
+      //@ts-ignore
+      items: orders,
+      total: count,
+    };
+  }
+
+  async getOrderItems(orderId: string): Promise<OrderItemEntity[]> {
+    const orderItems = await this.orderItemsRepository.find({
+      where: { orderId },
+    });
+
+    return orderItems;
+  }
+
+  async canSubscribeToOrder(orderId: string, user: AuthUser): Promise<void> {
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+    });
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    this.assertCanAccessOrder(order, user);
+  }
+
+  private assertCanAccessOrder(order: OrdersEntity, user: AuthUser): void {
+    if (this.isStaff(user.roles)) {
+      return;
+    }
+
+    if (order.userId !== user.sub) {
+      throw new ForbiddenException('Access denied');
+    }
+  }
+
+  private isStaff(roles: string[]): boolean {
+    return (
+      roles.includes('admin') ||
+      roles.includes('operator') ||
+      roles.includes('support')
+    );
+  }
+
+  async setOrderCourierId(
+    orderId: string,
+    courierId: string,
+  ): Promise<OrdersEntity> {
+    const order = await this.getOrderById(orderId);
+    order.courierId = courierId;
+    return this.ordersRepository.save(order);
+  }
+
+  async isCourierAssignedToOrder(
+    orderId: string,
+    courierId: string,
+  ): Promise<boolean> {
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+      select: ['courierId'],
+    });
+
+    return order?.courierId === courierId;
+  }
+}
