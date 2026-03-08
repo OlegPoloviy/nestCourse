@@ -8,9 +8,9 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
-      - api-network
+      - db-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER} -d ${DB_NAME}']
       interval: 5s
       timeout: 5s
       retries: 5
@@ -19,8 +19,8 @@ services:
     image: minio/minio
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - '${MINIO_API_PORT:-9000}:9000'
+      - '${MINIO_CONSOLE_PORT:-9001}:9001'
     env_file:
       - .env
     volumes:
@@ -28,7 +28,7 @@ services:
     networks:
       - api-network
     healthcheck:
-      test: [ "CMD", "mc", "ready", "local" ]
+      test: ['CMD', 'mc', 'ready', 'local']
       interval: 5s
       timeout: 5s
       retries: 5
@@ -36,12 +36,13 @@ services:
   api:
     build:
       context: .
-      target: prod_distroless
+      target: prod-distroless
     ports:
-      - "8080:3000"
+      - '${PORT:-8080}:3000'
     env_file:
       - .env
     networks:
+      - db-network
       - api-network
     depends_on:
       db:
@@ -49,41 +50,44 @@ services:
       minio:
         condition: service_healthy
 
-
-
   migrate:
     build:
       context: .
-      target: prod_deps
+      target: tools
     command: pnpm run db:migrate
+    env_file:
+      - .env
     profiles:
       - tools
     networks:
-      - api-network
+      - db-network
     depends_on:
-        db:
-          condition: service_healthy
-
+      db:
+        condition: service_healthy
 
   seed:
     build:
       context: .
-      target: prod_deps
+      target: tools
     command: pnpm run db:seed
+    env_file:
+      - .env
     profiles:
       - tools
     depends_on:
       db:
         condition: service_healthy
       migrate:
-          condition: service_completed_successfully
+        condition: service_completed_successfully
     networks:
-      - api-network
+      - db-network
 
 networks:
+  db-network:
+    driver: bridge
+    internal: true
   api-network:
     driver: bridge
-
 
 volumes:
   pgdata:
