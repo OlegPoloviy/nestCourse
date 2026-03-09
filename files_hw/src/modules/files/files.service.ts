@@ -12,6 +12,7 @@ import { ObjectStorageService } from './object-storage.service';
 import { FileRecordEntity } from './file-record.entity';
 import { FileStatus } from './file-record.entity';
 import { CompleteFileDto } from './dto/complete-file.dto';
+import { Product } from '../products/products.entity';
 import * as path from 'path';
 
 @Injectable()
@@ -19,12 +20,35 @@ export class FilesService {
   constructor(
     @InjectRepository(FileRecordEntity)
     private readonly fileRepository: Repository<FileRecordEntity>,
+    @InjectRepository(Product)
+    private readonly productRepository: Repository<Product>,
     private readonly objectStorageService: ObjectStorageService,
   ) {}
 
   async presign(dto: PresignFileDto, userId: string) {
     const extension = path.extname(dto.fileName);
     const key = generateProductKey(dto.productId, extension);
+
+    const existing = await this.productRepository.findOne({
+      where: { id: dto.productId },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(
+        `Product with id of ${dto.productId} not found`,
+      );
+    }
+
+    let uploadUrl: string;
+    try {
+      uploadUrl = await this.objectStorageService.createPresignedUploadUrl(
+        key,
+        dto.contentType,
+      );
+    } catch (error) {
+      console.error('Presign Error:', error);
+      throw new InternalServerErrorException('Could not generate upload URL');
+    }
 
     const fileRecord = this.fileRepository.create({
       ownerId: userId,
@@ -37,24 +61,12 @@ export class FilesService {
 
     const savedFile = await this.fileRepository.save(fileRecord);
 
-    try {
-      const uploadUrl =
-        await this.objectStorageService.createPresignedUploadUrl(
-          key,
-          dto.contentType,
-        );
-
-      return {
-        fileId: savedFile.id,
-        key: savedFile.key,
-        uploadUrl: uploadUrl,
-        contentType: savedFile.contentType,
-      };
-    } catch (error) {
-      await this.fileRepository.remove(savedFile);
-      console.error('Presign Error:', error);
-      throw new InternalServerErrorException('Could not generate upload URL');
-    }
+    return {
+      fileId: savedFile.id,
+      key: savedFile.key,
+      uploadUrl,
+      contentType: savedFile.contentType,
+    };
   }
 
   async completeUpload(dto: CompleteFileDto, userId: string) {

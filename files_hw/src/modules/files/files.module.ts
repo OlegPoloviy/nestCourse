@@ -5,9 +5,13 @@ import { FilesService } from './files.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { FileRecordEntity } from './file-record.entity';
 import { ConfigModule } from '@nestjs/config';
+import { Product } from '../products/products.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([FileRecordEntity]), ConfigModule],
+  imports: [
+    TypeOrmModule.forFeature([FileRecordEntity, Product]),
+    ConfigModule,
+  ],
   controllers: [FilesController],
   providers: [FilesService, ObjectStorageService],
 })

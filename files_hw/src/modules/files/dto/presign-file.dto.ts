@@ -1,4 +1,4 @@
-import { IsNumber, IsString } from 'class-validator';
+import { IsNumber, IsString, IsUUID } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class PresignFileDto {
@@ -6,7 +6,7 @@ export class PresignFileDto {
     description: 'The ID of the product associated with the file',
     example: '123e4567-e89b-12d3-a456-426614174000',
   })
-  @IsString()
+  @IsUUID()
   productId: string;
 
   @ApiProperty({
