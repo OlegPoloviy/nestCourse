@@ -1,5 +1,7 @@
 export enum OrderStatus {
   CREATED = 'CREATED',
+  PENDING = 'PENDING',
   PAID = 'PAID',
+  PROCESSED = 'PROCESSED',
   CANCELLED = 'CANCELLED',
 }

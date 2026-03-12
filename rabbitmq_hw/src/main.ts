@@ -25,8 +25,8 @@ async function bootstrap() {
 
   app.useGlobalFilters(new AllExceptionFilter());
   const config = new DocumentBuilder()
-    .setTitle('Lesson10 - Realtime')
-    .setDescription('Auth learning project')
+    .setTitle('RabbitMQ')
+    .setDescription('RabbitMQ learning project')
     .setVersion('1.0')
     .addBearerAuth(
       {

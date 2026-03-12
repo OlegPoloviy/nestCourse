@@ -12,21 +12,31 @@ import { UserModule } from '../user/user.module';
 import { OrderItemResolver } from './graphql/order-item.resolver';
 import { ProductsModule } from '../products/products.module';
 import { OrderTrackingModule } from '../order-tracking/order-tracking.module';
+import { RabbitmqModule } from '../rabbitmq/rabbitmq.module';
+import { OrdersProcessorService } from './orders-processor.service';
+import { ProcessedMessagesEntity } from './processed-message.entity';
 
 @Module({
   imports: [
     OrderTrackingModule,
+    RabbitmqModule,
     TypeOrmModule.forFeature([
       OrderItemEntity,
       OrdersEntity,
       Product,
       Product,
       UserEntity,
+      ProcessedMessagesEntity,
     ]),
     UserModule,
     ProductsModule,
   ],
-  providers: [OrdersService, OrderResolver, OrderItemResolver],
+  providers: [
+    OrdersService,
+    OrdersProcessorService,
+    OrderResolver,
+    OrderItemResolver,
+  ],
   controllers: [OrdersController],
   exports: [OrdersService],
 })

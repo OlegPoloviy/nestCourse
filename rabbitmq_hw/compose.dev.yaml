@@ -1,4 +1,14 @@
 services:
+  db:
+    # Host port (for DBeaver): DB_HOST_PORT; inside container Postgres always listens on 5432
+    ports:
+      - '127.0.0.1:${DB_HOST_PORT:-5432}:5432'
+    networks:
+      - db-network
+  migrate:
+    volumes:
+      - ./src/common/migrations:/usr/src/app/src/common/migrations
+
   api:
     build:
       context: .
@@ -11,3 +21,18 @@ services:
     volumes:
       - .:/usr/src/app
       - /usr/src/app/node_modules
+    networks:
+      - db-network
+      - api-network
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+networks:
+  db-network:
+    driver: bridge
+    internal: false

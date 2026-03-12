@@ -19,6 +19,7 @@ import { FilesModule } from './modules/files/files.module';
 import { FilesController } from './modules/files/files.controller';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { OrderTrackingModule } from './modules/order-tracking/order-tracking.module';
+import { RabbitmqModule } from './modules/rabbitmq/rabbitmq.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { OrderTrackingModule } from './modules/order-tracking/order-tracking.mod
     FilesModule,
     RealtimeModule,
     OrderTrackingModule,
+    RabbitmqModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -50,4 +50,7 @@ export class OrdersEntity {
 
   @UpdateDateColumn({ type: 'timestamptz', name: 'updated_at' })
   updatedAt: Date;
+
+  @Column({ type: 'timestamptz', name: 'processed_at', nullable: true })
+  processedAt: Date | null;
 }
