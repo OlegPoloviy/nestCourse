@@ -134,6 +134,7 @@ api-1     | [Nest] 46  - 03/12/2026, 10:32:23 PM   ERROR [OrdersProcessorService
 w Enable Watch
 ```
 And we will have that message in dlq:
+```
 Message 2
 The server reported 0 messages remaining.
 
@@ -161,7 +162,7 @@ Payload
 88 bytes
 Encoding: string
 {"messageId":"fail-test-1","orderId":"00000000-0000-0000-0000-000000000001","attempt":3}
-
+```
 ## Idempotency
 To test this I'll just use my existing order payload from 1 step and take the mesaage id from processed_messages table
 {
