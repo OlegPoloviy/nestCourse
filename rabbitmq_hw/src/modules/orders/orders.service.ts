@@ -50,6 +50,15 @@ export class OrdersService {
   ) {}
 
   async createOrder(data: CreateOrderDto): Promise<OrdersEntity> {
+
+   const userExists = await this.usersRepository.findOne({
+      where: { id: data.userId },
+      select: ['id'],
+    });
+    if (!userExists) {
+      throw new NotFoundException(`User ${data.userId} not found`);
+    }
+    
     const existing = await this.ordersRepository.findOne({
       where: { idempotencyKey: data.idempotencyKey },
       relations: ['items'],
