@@ -45,6 +45,9 @@ export class OrdersEntity {
   @Column({ type: 'uuid', unique: true })
   idempotencyKey: string;
 
+  @Column({ type: 'uuid', name: 'payment_id', nullable: true })
+  paymentId: string | null;
+
   @CreateDateColumn({ type: 'timestamptz', name: 'created_at' })
   createdAt: Date;
 

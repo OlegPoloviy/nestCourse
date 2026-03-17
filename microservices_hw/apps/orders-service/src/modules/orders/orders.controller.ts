@@ -8,6 +8,7 @@ import {
   HttpCode,
   HttpStatus,
   ParseUUIDPipe,
+  NotFoundException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
@@ -63,6 +64,19 @@ export class OrdersController {
   @ApiResponse({ status: 404, description: 'Order not found' })
   getById(@Param('id', new ParseUUIDPipe()) id: string): Promise<OrdersEntity> {
     return this.ordersService.getOrderById(id);
+  }
+
+  @Get(':id/payment-status')
+  async getOrderPaymentStatus(
+    @Param('id', new ParseUUIDPipe()) orderId: string,
+  ) {
+    const order = await this.ordersService.getOrderById(orderId);
+    if (!order.paymentId) {
+      throw new NotFoundException(
+        'Order has no payment linked. Create the order first so that payment is authorized.',
+      );
+    }
+    return this.ordersService.getPaymentStatus(order.paymentId);
   }
 
   @Patch(':id/courier')

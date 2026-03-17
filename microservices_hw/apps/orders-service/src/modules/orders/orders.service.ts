@@ -6,6 +6,8 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  Inject,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { OrdersEntity } from './orders.entity';
@@ -28,12 +30,53 @@ import { OrderStatus } from '../../constants';
 import { RabbitmqService } from '../rabbitmq/rabbitmq.service';
 import { OrdersProcessMessage } from './orders-queue.type';
 import { ProcessedMessagesEntity } from './processed-message.entity';
+import { ClientGrpc } from '@nestjs/microservices';
+import { Observable } from 'rxjs';
+import { lastValueFrom, timeout } from 'rxjs';
+import { ConfigService } from '@nestjs/config';
 
 const ORDERS_PROCESS_QUEUE = 'orders.process';
 
+interface AuthorizeRequest {
+  orderId: string;
+  amount: number;
+  currency: string;
+  idempotencyKey?: string;
+}
+
+export interface AuthorizeResponse {
+  paymentId: string;
+  status: string;
+  message: string;
+  providerRef?: string;
+  schemaVersion?: number;
+}
+
+interface GetPaymentStatusRequest {
+  paymentId: string;
+  payment_id?: string; // proto field name for compatibility
+}
+
+export interface GetPaymentStatusResponse {
+  paymentId: string;
+  status: string;
+  orderId: string;
+  providerRef?: string;
+  failureReason?: string;
+}
+
+interface PaymentsGrpcService {
+  Authorize(payload: AuthorizeRequest): Observable<AuthorizeResponse>;
+  GetPaymentStatus(
+    payload: GetPaymentStatusRequest,
+  ): Observable<GetPaymentStatusResponse>;
+}
+
 @Injectable()
-export class OrdersService {
+export class OrdersService implements OnModuleInit {
   private readonly logger = new Logger(OrdersService.name);
+  private paymentsService!: PaymentsGrpcService;
+
   constructor(
     private dataSource: DataSource,
     private readonly rabbitmqService: RabbitmqService,
@@ -47,7 +90,14 @@ export class OrdersService {
     private readonly usersRepository: Repository<UserEntity>,
     @InjectRepository(ProcessedMessagesEntity)
     private readonly processedMessagesRepository: Repository<ProcessedMessagesEntity>,
+    @Inject('PAYMENTS_GRPC_CLIENT') private readonly client: ClientGrpc,
+    private readonly configService: ConfigService,
   ) {}
+
+  onModuleInit() {
+    this.paymentsService =
+      this.client.getService<PaymentsGrpcService>('Payments');
+  }
 
   async createOrder(data: CreateOrderDto): Promise<OrdersEntity> {
     const existing = await this.ordersRepository.findOne({
@@ -55,6 +105,19 @@ export class OrdersService {
       relations: ['items'],
     });
     if (existing) return existing;
+
+    const timeoutMsRaw = this.configService.get<string | number>(
+      'PAYMENTS_GRPC_TIMEOUT_MS',
+    );
+    const timeoutMs =
+      typeof timeoutMsRaw === 'number'
+        ? timeoutMsRaw
+        : parseInt(String(timeoutMsRaw ?? ''), 10);
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new BadRequestException(
+        'PAYMENTS_GRPC_TIMEOUT_MS must be set to a positive number (ms). Cannot create order without payment timeout.',
+      );
+    }
 
     const savedOrder = await this.dataSource.transaction(async (manager) => {
       const orderRepo = manager.getRepository(OrdersEntity);
@@ -80,6 +143,94 @@ export class OrdersService {
       return saved;
     });
 
+    const totalAmount = data.items.reduce(
+      (sum, item) => sum + item.quantity,
+      0,
+    );
+    const authorize$ = this.paymentsService.Authorize({
+      orderId: savedOrder.id,
+      amount: totalAmount,
+      currency: 'USD',
+      idempotencyKey: data.idempotencyKey,
+    });
+    try {
+      const authResult = await lastValueFrom(
+        authorize$.pipe(timeout(timeoutMs)),
+      );
+      const raw =
+        authResult &&
+        typeof authResult === 'object' &&
+        typeof (
+          authResult as unknown as {
+            toObject?: () => Record<string, unknown>;
+          }
+        ).toObject === 'function'
+          ? (
+              authResult as unknown as {
+                toObject: () => Record<string, unknown>;
+              }
+            ).toObject()
+          : (authResult as unknown as Record<string, unknown>);
+      const auth = raw || {};
+      let pid: string | undefined = (auth.payment_id ??
+        auth.paymentId ??
+        auth.id) as string | undefined;
+      if (pid == null && authResult && typeof authResult === 'object') {
+        const fallback = authResult as unknown as Record<string, unknown>;
+        pid = (fallback['payment_id'] ??
+          fallback['paymentId'] ??
+          fallback['id']) as string | undefined;
+      }
+      if (pid == null && authResult && typeof authResult === 'object') {
+        try {
+          const plain = JSON.parse(JSON.stringify(authResult)) as Record<
+            string,
+            unknown
+          >;
+          pid = (plain.payment_id ?? plain.paymentId ?? plain.id) as
+            | string
+            | undefined;
+        } catch {
+          // keep pid undefined
+        }
+      }
+      const pidStr = typeof pid === 'string' && pid.length > 0 ? pid : null;
+      if (!pidStr) {
+        this.logger.error(
+          `Payments.Authorize returned no payment id for order ${savedOrder.id}. Keys: ${Object.keys(raw || {}).join(', ')}`,
+        );
+        await this.orderItemsRepository.delete({ orderId: savedOrder.id });
+        await this.ordersRepository.delete({ id: savedOrder.id });
+        throw new BadRequestException(
+          'Payment authorization returned no payment id. Order was not created.',
+        );
+      }
+      await this.ordersRepository.update(savedOrder.id, {
+        paymentId: pidStr,
+      });
+      savedOrder.paymentId = pidStr;
+      this.logger.log(
+        `Payment authorized for order ${savedOrder.id}, paymentId=${pidStr ?? pid ?? 'unknown'}`,
+      );
+    } catch (err: any) {
+      await this.orderItemsRepository.delete({ orderId: savedOrder.id });
+      await this.ordersRepository.delete({ id: savedOrder.id });
+      if (err?.name === 'TimeoutError') {
+        this.logger.warn(
+          `Payments.Authorize timeout for order ${savedOrder.id} after ${timeoutMs}ms. Order rolled back.`,
+        );
+        throw new BadRequestException(
+          `Payment authorization timed out after ${timeoutMs}ms. Order was not created.`,
+        );
+      }
+      this.logger.error(
+        `Payments.Authorize failed for order ${savedOrder.id}: ${err?.message}. Order rolled back.`,
+      );
+      throw new BadRequestException(
+        err?.message || 'Payment authorization failed. Order was not created.',
+      );
+    }
+
     const messageId = randomUUID();
     this.rabbitmqService.publish(ORDERS_PROCESS_QUEUE, {
       messageId,
@@ -98,6 +249,31 @@ export class OrdersService {
     return this.dataSource.transaction((manager) =>
       this.processOrderFromQueueInternal(manager, payload),
     );
+  }
+
+  async getPaymentStatus(paymentId: string) {
+    const timeoutMsRaw = this.configService.get<string | number>(
+      'PAYMENTS_GRPC_TIMEOUT_MS',
+    );
+    const timeoutMs =
+      typeof timeoutMsRaw === 'number'
+        ? timeoutMsRaw
+        : parseInt(String(timeoutMsRaw ?? ''), 10);
+    const ms = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 5000;
+    const status$ = this.paymentsService.GetPaymentStatus({
+      paymentId,
+      payment_id: paymentId,
+    });
+    const result = await lastValueFrom(status$.pipe(timeout(ms)));
+    const raw =
+      result && typeof result === 'object'
+        ? (result as unknown as Record<string, unknown>)
+        : {};
+    const paymentIdValue = String(raw.payment_id ?? raw.paymentId ?? '');
+    const paymentStatusValue = String(
+      raw.payment_status ?? raw.paymentStatus ?? raw.status ?? '',
+    );
+    return { paymentId: paymentIdValue, paymentStatus: paymentStatusValue };
   }
 
   async processOrderFromQueueIdempotent(
