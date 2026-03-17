@@ -1,78 +1,152 @@
----
+# Microservices (Orders + Payments)
 
-## 7. Orders & RabbitMQ — як тестувати
+Monorepo: **orders-service** (NestJS HTTP API + RabbitMQ consumer) and **payments-service** (NestJS gRPC server). Orders calls Payments over gRPC for authorization and payment status.
 
-Перед тестами: `pnpm run docker:dev` (або `docker:dev:build`), виконати міграції та seed (користувачі, продукти). API: `http://localhost:3001`, RabbitMQ Management: `http://localhost:15672` (guest/guest).
+## Prerequisites
 
-### 7.1 Happy path
+- Node.js ≥ 18
+- pnpm (or npm)
+- PostgreSQL (two instances or two databases: one for orders, one for payments)
+- RabbitMQ
 
-- **Створити order → PENDING**
-  - `POST http://localhost:3001/orders` (JSON):
-    - `idempotencyKey` — будь-який унікальний UUID
-    - `userId` — UUID існуючого користувача (після seed, наприклад з таблиці `user`)
-    - `items` — масив `[{ "productId": "<uuid продукту>", "quantity": 1 }]`
-  - Очікуваний результат: `201`, тіло з `status: "PENDING"`.
-- **Перевірити статус**
-  - `GET http://localhost:3001/orders/:id` — має бути `PENDING` одразу після створення.
-- **Воркер → PROCESSED**
-  - Воркер обробляє чергу `orders.process`. За кілька секунд (до ~1–2 хв) знову викликати `GET http://localhost:3001/orders/:id`.
-  - Очікуваний результат: `status: "PROCESSED"`, заповнене `processedAt`.
+## Install
 
-### 7.2 Retry
+From each apps folders:
 
-- **Змусити воркер падати**
-  - Наприклад: для одного з продуктів у БД встановити `stock = 0` (у таблиці `product`).
-  - Створити замовлення на цей продукт (як у 7.1).
-- **Перевірити кількість спроб**
-  - У логах контейнера API шукати рядки від `OrdersProcessorService`:
-    - `Handle message start: messageId=..., orderId=..., attempt=0`
-    - Після помилки: `Handle message result=retry: ... attempt=0, nextAttempt=1`
-    - Далі `attempt=1`, `attempt=2`.
-  - Кількість спроб задається в `.env`: `RABBIT_RETRY_COUNT=3` (за замовчуванням 3).
+```bash
+pnpm install
+```
 
-### 7.3 DLQ
+## Environment
 
-- **Після MAX спроб → повідомлення в orders.dlq**
-  - Продовжити сценарій з 7.2: після вичерпання спроб (attempt 0, 1, 2) воркер робить `nack` без requeue → повідомлення йде в Dead Letter Exchange і потрапляє в чергу `orders.dlq`.
-  - Перевірка: RabbitMQ Management → Queues → `orders.dlq` → вкладка "Get messages" або перегляд кількості повідомлень. Має з’явитися одне повідомлення з тим самим `orderId` / `messageId` у payload.
+Copy `.env.example` to `.env` in app root and set:
 
-### 7.4 Idempotency
+- **Orders:** `DB_*`, `RABBITMQ_URL`, `JWT_*`, optional AWS/S3 and MinIO for files
+- **Payments:** `PAYMENTS_DB_*`
+- **Orders → Payments:** `PAYMENTS_GRPC_URL` (default `localhost:50051`), `PAYMENTS_GRPC_TIMEOUT_MS`
 
-- **Повторно надіслати те саме messageId**
-  - Воркер зберігає оброблені `messageId` у таблиці `processed_messages`. Якщо приходить повідомлення з уже відомим `messageId`, воно не обробляється повторно (дубль не створюється).
-- **Як перевірити**
-  1. Створити замовлення (7.1) і дочекатися `PROCESSED` (або мати вже існуючий `orderId`).
-  2. Один раз надіслати повідомлення в чергу з фіксованим `messageId` (скрипт нижче або RabbitMQ Management).
-  3. Другий раз надіслати **те саме** повідомлення (той самий `messageId`).
-- **Очікування**
-  - Перший раз: у логах `Handle message result=success` (або `success(idempotent)` якщо order вже PROCESSED).
-  - Другий раз: у логах `Message <messageId> already processed. Skipping...` і `result=success(idempotent)` — повторної обробки (зміни статусу замовлення) немає.
-- **Скрипт для надсилання повідомлення в чергу (для 7.4)**
-  З кореня проєкту (потрібні `ORDER_ID` та `MESSAGE_ID` — UUID):
-  ```bash
-  ORDER_ID=<uuid-замовлення> MESSAGE_ID=<будь-який-uuid> node scripts/publish-order-message.cjs
-  ```
-  Запустити двічі з **тим самим** `MESSAGE_ID` і переконатися в логах, що другий раз повідомлення лише пропускається без повторної обробки.
+## Running the services
 
-## Upload Flow (Presign -> Upload -> Complete)
+1. Start PostgreSQL (x2) and RabbitMQ (e.g. via Docker or locally).
+2. Run migrations (and seed for orders) in `apps/orders-service` and `apps/payments-service`.
+3. Start from root **payments-service** (gRPC on port 50051):
+   ```bash
+   pnpm run start:payments
+   ```
+4. Start **orders-service** (HTTP on port 3000):
+   ```bash
+   pnpm run start:orders
+   ```
 
-1. **Presign (`POST /files/presign`):**
-   The client requests an upload URL by providing the target `productId`, file name, and content type. The backend generates a secure S3 key, creates a `FileRecord` in the database with a `PENDING` status, and returns a temporary `uploadUrl` which is working for 15 minutes generated via the AWS SDK.
-2. **Upload (Client -> S3):**
-   The client performs a direct `PUT` request to the S3 bucket using the provided `uploadUrl`. The file bytes is passed to the backend entirely
-3. **Complete (`POST /files/complete`):**
-   Upon successful upload to S3, the client notifies the backend with the `fileId`. The system verifies the user's ownership, updates the `FileRecord` status from `PENDING` to `READY`
+API base URL: `http://localhost:3000/api` (or the port you configure).
 
-## Security & Access Control
 
-- **Role-Based Access (RBAC):** Only users with the `ADMIN` role can initiate and complete the upload process. Endpoints are protected by `JwtAuthGuard` and `UserRoleGuard`.
-- **Ownership Verification:** During the `complete` stage, the backend strictly verifies that the `ownerId` of the `FileRecord` matches the ID of the admin making the request. It is impossible to confirm an upload initiated by another user.
-- **Backend-Generated Keys:** Clients cannot specify custom paths or prefixes. The object key is strictly generated by the backend logic (e.g., `products/{productId}/images/{uuid}.jpg`).
-- **S3 Bucket Policy:** The bucket does not allow public uploads. It is configured with a Read-Only policy to safely serve images to end-users without exposing write access.
+## E2E: Orders → Payments.Authorize → paymentId and status
 
-## Delivery & Viewing
+So for example, you can call integrated Swagger or postman
 
-The application dynamically generates a viewing URL for each `READY` file. This is constructed using the `CLOUDFRONT_BASE_URL` environment variable combined with the file's S3 key.
+Creation of order
+```json
+{
+  "idempotencyKey": "c4e8a2b9-1f73-4d6a-9b5c-0a7e3d2f8c61",
+  "userId": "5b770938-9b70-416b-bba5-1516dec0e966",
+  "items": [
+    {
+      "productId": "b5107610-1a39-492f-9d2d-dbaa0d7b1e06",
+      "quantity": 10
+    }
+  ]
+}
+```
 
-- **Dev Environment:** Points directly to the local MinIO bucket instance.
-- **Production:** Easily swappable to an AWS CloudFront CDN URL for optimized global delivery.
+Response body
+```json
+{
+  "id": "59e6629d-10b8-4a62-b977-595b3db5554c",
+  "userId": "5b770938-9b70-416b-bba5-1516dec0e966",
+  "status": "PROCESSED",
+  "courierId": null,
+  "idempotencyKey": "c4e8a2b9-1f73-4d6a-9b5c-0a7e3d2f8c61",
+  "paymentId": "44c1db9b-114d-46e4-9288-c95aea5f1b23",
+  "createdAt": "2026-03-17T21:35:33.079Z",
+  "updatedAt": "2026-03-17T21:35:33.120Z",
+  "processedAt": "2026-03-17T21:35:33.637Z",
+  "items": [
+    {
+      "id": "6ed493ea-efd4-488c-93c1-df190bbd49db",
+      "orderId": "59e6629d-10b8-4a62-b977-595b3db5554c",
+      "productId": "b5107610-1a39-492f-9d2d-dbaa0d7b1e06",
+      "quantity": 10,
+      "priceAtPurchase": 79.99
+    }
+  ]
+}
+```
+And logs for microservice and monorepo
+```text
+yment id. Order was not created.
+[Nest] 30000  - 17.03.2026, 23:35:33     LOG [OrdersService] Payment authorized for order 59e6629d-10b8-4a62-b977-595b3db5554c, paymentId=44c1db9b-114d-46e4-9288-c95aea5f1b23
+[Nest] 30000  - 17.03.2026, 23:35:33     LOG [OrdersProcessorService] Handle message start: messageId=fb9815e7-37be-49f7-965a-71f514e97f18, orderId=59e6629d-10b8-4a62-b977-595b3db5554c, attempt=0
+[Nest] 30000  - 17.03.2026, 23:35:33     LOG [OrdersService] Processing order from queue: 59e6629d-10b8-4a62-b977-595b3db5554c
+[Nest] 30000  - 17.03.2026, 23:35:33     LOG [OrdersService] Order 59e6629d-10b8-4a62-b977-595b3db5554c status changed to PROCESSED
+[Nest] 30000  - 17.03.2026, 23:35:33     LOG [OrdersProcessorService] Handle message result=success: messageId=fb9815e7-37be-49f7-965a-71f514e97f18, orderId=59e6629d-10b8-4a62-b977-595b3db5554c, attempt=0
+```
+Microservice
+```
+as created)
+[Nest] 29916  - 17.03.2026, 23:35:33     LOG [PaymentsGRPCController] Authorizing payment for order: 59e6629d-10b8-4a62-b977-595b3db5554c
+[Nest] 29916  - 17.03.2026, 23:35:48     LOG [PaymentsGRPCController] Getting status for payment: 44c1db9b-114d-46e4-9288-c95aea5f1b23
+```
+## Orders and RabbitMQ
+Also we can call endpoint for getting payment status
+```bash
+curl -X 'GET' \
+  'http://localhost:3000/api/orders/59e6629d-10b8-4a62-b977-595b3db5554c/payment-status' \
+  -H 'accept: */*'
+```
+Result 
+```json
+{
+  "paymentId": "44c1db9b-114d-46e4-9288-c95aea5f1b23",
+  "paymentStatus": "1"
+}
+```
+
+- Create order → status **PENDING**; worker consumes `orders.process` and moves order to **PROCESSED**.
+
+## About protobuf
+I stored protocol buffer in the root of project, and configured each module to only read it, so one modules are imported between each other
+
+```typescript
+ const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    PaymentsServiceModule,
+    {
+      transport: Transport.GRPC,
+      options: {
+        package: 'payments.v1',
+        protoPath: join(__dirname, '../../../contracts/proto/payments.proto'),
+        url: microserviceUrl,
+      },
+    },
+```
+
+```typescript
+ClientsModule.registerAsync([
+      {
+        name: 'PAYMENTS_GRPC_CLIENT',
+        imports: [ConfigModule],
+        inject: [ConfigService],
+        useFactory: (config: ConfigService) => ({
+          transport: Transport.GRPC,
+          options: {
+            package: 'payments.v1',
+            protoPath: join(
+              process.cwd(),
+              '../../contracts/proto/payments.proto',
+            ),
+            url: config.get<string>('PAYMENTS_GRPC_URL', 'localhost:50051'),
+          },
+        }),
+      },
+    ]),
+```
