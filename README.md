@@ -1,1 +1,1 @@
-Please check the files_hw directory
+Please check the microservices_hw directory
