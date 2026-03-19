@@ -17,10 +17,9 @@ services:
 
   rabbitmq:
     image: rabbitmq:3-management
-    container_name: rabbitmq
     ports:
-      - '5672:5672' 
-      - '15672:15672'
+      - '127.0.0.1:${RABBITMQ_AMQP_PORT:-5672}:5672'
+      - '127.0.0.1:${RABBITMQ_MGMT_PORT:-15672}:15672'
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBIT_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD:-guest}

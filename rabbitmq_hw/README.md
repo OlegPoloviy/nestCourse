@@ -1,51 +1,127 @@
 # Rabbitmq worker hw
-In this homwework I've implemented a worker service for my order domains
+
+In this homework I've implemented a worker service for my order domains
 
 # How to run everything
-Paste or create your real envs, see exxample in env.example
+
+Copy `.env.example` to `.env` and adjust values. The API reads **`RABBITMQ_URL`** (AMQP connection string). Inside Docker Compose the hostname must be the service name **`rabbitmq`** (default in `.env.example`).
 
 Run everything on Docker
+
 ```bash
 pnpm docker:dev:build
 ```
+
 Than you will have access to postgres, rabbitmq, minio and api itself
 
 To run migrations
+
 ```bash
 pnpm docker:migrate
 ```
+
 And seeds
+
 ```bash
 pnpm docker:seed
 ```
 
 ## Topology
-orders.process - main queue. When the user sends a request to create an order, the API responds immediately with the order in status **PENDING**. The service then publishes a message to this queue with `orderId`, `messageId`, `attempt`, and `items` (product id, quantity, etc.). The worker consumes from here, processes the order (status → PROCESSED, processedAt), and uses republish for retries. 
+
+orders.process - main queue. When the user sends a request to create an order, the API responds immediately with the order in status **PENDING**. The service then publishes a message to this queue with `orderId`, `messageId`, `attempt`, and `items` (product id, quantity, etc.). The worker consumes from here, processes the order (status → PROCESSED, processedAt), and uses republish for retries.
 orders.dlq - dead letter queue. If we have some error that will fail every time and will block our queue or worker (toxic error) we will send this message to a dlq after some retries.
 I used one custom exchange: **dlx.exchange** (direct, durable). It is the dead letter exchange. When a message is nack'd from `orders.process`, RabbitMQ sends it to `dlx.exchange`, which routes it to `orders.dlq`. For publishing to the main queue we use the default (nameless) exchange — we just send to the queue by name.
 
 ## Retry mechanism
+
 I've chosen the simpliest way of retry strategy - republish message to queue with one more attempt, if the attepts is more than we have choosen, we send the message to dlq
 
 ## Routing keys
+
 For orders - just explicit exchange route by queue name
 DLQ: binding is `dlx.exchange` to `orders.dlq` with routing key **orders.dlq**. When a message is dead-lettered from `orders.process`, it is published to `dlx.exchange` with this routing key.
 
 ## Delivering messages
+
 1. User creates order → API returns PENDING and publishes to **orders.process** (messageId, orderId, attempt 0, items).
 2. Worker takes message from **orders.process**. Success → ack (message gone). Idempotent (already processed) → ack. Error and attempt < max → delay, republish to **orders.process** with attempt+1, ack original. Error and attempt ≥ max → nack → message goes to **dlx.exchange** → **orders.dlq**.
 3. Invalid message (e.g. bad JSON) → nack → same path to **orders.dlq**.
 
-## How to check everyting
-1. Open http://localhost:15672 (login e.g. guest/guest or from .env).
-2. **Queues** - see `orders.process` and `orders.dlq`. Check Ready/Total and message rates.
+## How to check everything
+
+1. Open `http://127.0.0.1:${RABBITMQ_MGMT_PORT:-15672}` (login e.g. guest/guest or from `.env`).
+2. **Queues** — see `orders.process` and `orders.dlq`. Check Ready/Total and message rates.
 3. To see a message in DLQ: publish a message with a fake `orderId` to `orders.process`, wait for retries to exhaust, then open `orders.dlq` and use "Get messages" — you will see the payload and `x-death` headers.
-4. **Exchanges** - open `dlx.exchange`, check bindings to `orders.dlq` with routing key `orders.dlq`.
+4. **Exchanges** — open `dlx.exchange`, check bindings to `orders.dlq` with routing key `orders.dlq`.
+
+## Deterministic smoke check (curl + queue counters)
+
+Copy/paste in **bash** (Git Bash / WSL / macOS / Linux). Requires **`curl`**, **`jq`**, and a UUID generator (`uuidgen` or `python3`). Assumes the stack is up (`pnpm docker:dev:build`), with **`pnpm docker:migrate`** and **`pnpm docker:seed`** already run, and `.env` loaded in the shell (or defaults below match your DB credentials).
+
+```bash
+COMPOSE='docker compose -f compose.yaml -f compose.dev.yaml'
+API="http://127.0.0.1:${DEV_PORT:-3001}/api"
+RMQ="http://127.0.0.1:${RABBITMQ_MGMT_PORT:-15672}"
+AUTH="${RABBIT_USER:-guest}:${RABBIT_PASSWORD:-guest}"
+
+uuid() { uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]' || python3 -c "import uuid; print(uuid.uuid4())"; }
+
+# 0) Queues exist (HTTP 200 from Management API)
+curl -fsS -u "$AUTH" "$RMQ/api/queues/%2F/orders.process" >/dev/null && echo "orders.process: ok"
+curl -fsS -u "$AUTH" "$RMQ/api/queues/%2F/orders.dlq" >/dev/null && echo "orders.dlq: ok"
+
+# 1) Seeded user + product from Postgres
+DB_U="${DB_USER:-postgres}"
+DB_N="${DB_NAME:-postgres}"
+USER_ID=$($COMPOSE exec -T db psql -U "$DB_U" -d "$DB_N" -tAc 'SELECT id::text FROM "user" ORDER BY email LIMIT 1;' | tr -d '\r')
+PRODUCT_ID=$($COMPOSE exec -T db psql -U "$DB_U" -d "$DB_N" -tAc 'SELECT id::text FROM "Products" ORDER BY sku LIMIT 1;' | tr -d '\r')
+
+# 2) POST /orders → 201, status PENDING
+IDK=$(uuid)
+BODY=$(jq -n --arg u "$USER_ID" --arg k "$IDK" --arg p "$PRODUCT_ID" \
+  '{idempotencyKey:$k,userId:$u,items:[{productId:$p,quantity:1}]}')
+CREATE_CODE=$(curl -sS -o /tmp/rmq-hw-order.json -w "%{http_code}" -H "Content-Type: application/json" -d "$BODY" "$API/orders")
+test "$CREATE_CODE" = "201" && jq -e '.status=="PENDING"' /tmp/rmq-hw-order.json >/dev/null && echo "create: ok (201 PENDING)"
+ORDER_ID=$(jq -r .id /tmp/rmq-hw-order.json)
+
+# 3) Happy path → PROCESSED
+for _ in {1..15}; do
+  ST=$(curl -fsS "$API/orders/$ORDER_ID" | jq -r .status)
+  if test "$ST" = "PROCESSED"; then echo "happy path: ok"; break; fi
+  sleep 1
+done
+
+# 4) Retry / DLQ — poison message (invalid order UUID path in worker)
+DLQ_BEFORE=$(curl -fsS -u "$AUTH" "$RMQ/api/queues/%2F/orders.dlq" | jq .messages)
+BAD_MID=$(uuid)
+PAYLOAD=$(jq -n --arg m "$BAD_MID" '{messageId:$m,orderId:"00000000-0000-0000-0000-000000000001",attempt:0}' -c)
+curl -fsS -u "$AUTH" -H "Content-Type: application/json" -X POST \
+  "$RMQ/api/exchanges/%2F/amq.default/publish" \
+  -d "$(jq -n --arg p "$PAYLOAD" '{properties:{},routing_key:"orders.process",payload:$p,payload_encoding:"string"}')" >/dev/null
+sleep 8
+DLQ_AFTER=$(curl -fsS -u "$AUTH" "$RMQ/api/queues/%2F/orders.dlq" | jq .messages)
+test "$DLQ_AFTER" -gt "$DLQ_BEFORE" && echo "dlq: ok ($DLQ_BEFORE → $DLQ_AFTER messages)"
+
+# 5) Idempotency — republish same messageId; processed_messages row count stays 1
+MSG_ID=$($COMPOSE exec -T db psql -U "$DB_U" -d "$DB_N" -tAc "SELECT message_id::text FROM processed_messages WHERE order_id='${ORDER_ID}'::uuid LIMIT 1;" | tr -d '\r')
+PC_BEFORE=$($COMPOSE exec -T db psql -U "$DB_U" -d "$DB_N" -tAc "SELECT COUNT(*)::text FROM processed_messages WHERE message_id='${MSG_ID}'::uuid;" | tr -d '\r')
+PAYLOAD2=$(jq -n --arg m "$MSG_ID" --arg o "$ORDER_ID" '{messageId:$m,orderId:$o,attempt:0}' -c)
+curl -fsS -u "$AUTH" -H "Content-Type: application/json" -X POST \
+  "$RMQ/api/exchanges/%2F/amq.default/publish" \
+  -d "$(jq -n --arg p "$PAYLOAD2" '{properties:{},routing_key:"orders.process",payload:$p,payload_encoding:"string"}')" >/dev/null
+sleep 3
+PC_AFTER=$($COMPOSE exec -T db psql -U "$DB_U" -d "$DB_N" -tAc "SELECT COUNT(*)::text FROM processed_messages WHERE message_id='${MSG_ID}'::uuid;" | tr -d '\r')
+test "$PC_BEFORE" = "1" && test "$PC_AFTER" = "1" && echo "idempotency: ok (single processed_messages row)"
+```
+
+**Expected highlights:** step 2 prints `create: ok`, step 3 `happy path: ok`, step 4 `dlq: ok`, step 5 `idempotency: ok`. If a step is silent, inspect `docker compose ... logs api` and the RabbitMQ UI.
 
 # Proofs
 
 ## Happy path
+
 After creating order
+
 ```json
 {
   "userId": "cde2b630-1c97-4178-b5ed-5973229af196",
@@ -58,7 +134,9 @@ After creating order
   "updatedAt": "2026-03-12T22:27:59.698Z"
 }
 ```
+
 And if I make the same request again
+
 ```json
 {
   "id": "6a5176e3-630e-436c-a185-4e5fafc790d9",
@@ -82,6 +160,7 @@ And if I make the same request again
 ```
 
 ## Retry
+
 To trigger a retry I just logged into rabbitmq management console and added an message with invalid product id to the queue
 
 And the result is
@@ -133,7 +212,9 @@ api-1     | [Nest] 46  - 03/12/2026, 10:32:23 PM   ERROR [OrdersProcessorService
 
 w Enable Watch
 ```
+
 And we will have that message in dlq:
+
 ```
 Message 2
 The server reported 0 messages remaining.
@@ -141,20 +222,20 @@ The server reported 0 messages remaining.
 Exchange	dlx.exchange
 Routing Key	orders.dlq
 Redelivered	○
-Properties	
+Properties
 delivery_mode:	2
-headers:	
-x-death:	
+headers:
+x-death:
 count:	1
-exchange:	
+exchange:
 queue:	orders.process
 reason:	rejected
 routing-keys:	orders.process
 time:	1773354743
-x-first-death-exchange:	
+x-first-death-exchange:
 x-first-death-queue:	orders.process
 x-first-death-reason:	rejected
-x-last-death-exchange:	
+x-last-death-exchange:
 x-last-death-queue:	orders.process
 x-last-death-reason:	rejected
 content_type:	application/json
@@ -163,15 +244,18 @@ Payload
 Encoding: string
 {"messageId":"fail-test-1","orderId":"00000000-0000-0000-0000-000000000001","attempt":3}
 ```
+
 ## Idempotency
+
 To test this I'll just use my existing order payload from 1 step and take the mesaage id from processed_messages table
 {
-  "messageId": "cac0166b-f6a5-4218-a241-96eff8b48d9f",
-  "orderId": "6a5176e3-630e-436c-a185-4e5fafc790d9",
-  "attempt": 0
+"messageId": "cac0166b-f6a5-4218-a241-96eff8b48d9f",
+"orderId": "6a5176e3-630e-436c-a185-4e5fafc790d9",
+"attempt": 0
 }
 
 And the result is
+
 ```
 i-1     | [Nest] 46  - 03/12/2026, 10:40:37 PM    WARN [OrdersService] Message cac0166b-f6a5-4218-a241-96eff8b48d9f already processed. Skipping...
 api-1     | [Nest] 46  - 03/12/2026, 10:40:37 PM     LOG [OrdersProcessorService] Handle message result=success(idempotent): messageId=cac0166b-f6a5-4218-a241-96eff8b48d9f, orderId=6a5176e3-630e-436c-a185-4e5fafc790d9, attempt=0
