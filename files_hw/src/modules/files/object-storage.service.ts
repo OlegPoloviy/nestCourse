@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { S3Client, PutObjectCommand, S3ClientConfig } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  HeadObjectCommand,
+  S3ClientConfig,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 @Injectable()
@@ -49,6 +54,31 @@ export class ObjectStorageService {
     });
 
     return getSignedUrl(this.s3, command, { expiresIn: 900 });
+  }
+
+  async objectExists(key: string): Promise<boolean> {
+    const command = new HeadObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+    });
+
+    try {
+      await this.s3.send(command);
+      return true;
+    } catch (error: unknown) {
+      const err = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+      const statusCode = err.$metadata?.httpStatusCode;
+
+      if (
+        statusCode === 404 ||
+        err.name === 'NotFound' ||
+        err.name === 'NoSuchKey'
+      ) {
+        return false;
+      }
+
+      throw error;
+    }
   }
 
   getFileViewUrl(key: string): string {

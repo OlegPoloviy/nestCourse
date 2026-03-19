@@ -3,6 +3,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PresignFileDto } from './dto/presign-file.dto';
 import { generateProductKey } from '../../common/utils/key.utils';
@@ -87,6 +88,15 @@ export class FilesService {
         message: 'File is already confirmed',
         viewUrl: this.objectStorageService.getFileViewUrl(fileRecord.key),
       };
+    }
+
+    const objectExists = await this.objectStorageService.objectExists(
+      fileRecord.key,
+    );
+    if (!objectExists) {
+      throw new BadRequestException(
+        'File upload is not completed in object storage',
+      );
     }
 
     fileRecord.status = FileStatus.READY;
